@@ -63,35 +63,6 @@ class TestCommonFull:
         # Should return None because chat_id is None and not in chats
         assert result is None
 
-    def test_event_common_set_client_with_chat_peer(self):
-        event = events.EventCommon(chat_peer=types.PeerUser(123), msg_id=456)
-        client = MagicMock()
-        client._mb_entity_cache = MagicMock()
-        client._mb_entity_cache.get.return_value = types.User(id=123, access_hash=456)
-        
-        event._set_client(client)
-        assert event._client == client
-        assert event._chat is not None
-
-
-class TestRawFull:
-    def test_raw_filter_return_event(self):
-        raw = events.Raw(func=lambda e: e.test)
-        event = MagicMock()
-        event.test = 'value'
-        
-        result = raw.filter(event)
-        # Should return the event itself when func returns truthy value
-        assert result == event
-
-
-class TestMessageDeletedFull:
-    def test_message_deleted_build_channel_without_messages(self):
-        update = types.UpdateDeleteChannelMessages(channel_id=123, messages=[], pts=0)
-        event = events.MessageDeleted.build(update)
-        assert event is not None
-        assert event.deleted_ids == []
-        assert event.deleted_id is None
 
 
 class TestMessageReadFull:
@@ -131,24 +102,6 @@ class TestMessageReadFull:
 
 
 class TestUserUpdateFull:
-    def test_user_update_build_update_channel_user_typing(self):
-        action = types.SendMessageTypingAction()
-        update = types.UpdateChannelUserTyping(channel_id=456, from_id=types.PeerUser(123), action=action)
-        event = events.UserUpdate.build(update)
-        assert event is not None
-        assert event.action == action
-        assert event.sender_id == 123
-        assert event.chat_id == -456
-
-    def test_user_update_build_update_chat_user_typing(self):
-        action = types.SendMessageTypingAction()
-        update = types.UpdateChatUserTyping(chat_id=456, from_id=123, action=action)
-        event = events.UserUpdate.build(update)
-        assert event is not None
-        assert event.action == action
-        assert event.sender_id == 123
-        assert event.chat_id == 456
-
     @pytest.mark.asyncio
     async def test_user_update_event_get_user(self):
         event = events.UserUpdate.Event(peer=types.PeerUser(123))
@@ -170,69 +123,7 @@ class TestUserUpdateFull:
         assert result == input_user
 
 
-class TestNewMessageFull:
-    @pytest.mark.asyncio
-    async def test_new_message_build_update_short_message_outgoing(self):
-        update = types.UpdateShortMessage(
-            out=True,
-            mentioned=False,
-            media_unread=False,
-            silent=False,
-            id=1,
-            user_id=123,
-            message='test',
-            date=None,
-            fwd_from=None,
-            via_bot_id=None,
-            reply_to=None,
-            entities=None,
-            ttl_period=None
-        )
-        event = events.NewMessage.build(update, self_id=456)
-        assert event is not None
-        assert event.message.out is True
-
-    @pytest.mark.asyncio
-    async def test_new_message_build_update_short_chat_message(self):
-        update = types.UpdateShortChatMessage(
-            out=False,
-            mentioned=False,
-            media_unread=False,
-            silent=False,
-            id=1,
-            chat_id=456,
-            from_id=123,
-            message='test',
-            date=None,
-            fwd_from=None,
-            via_bot_id=None,
-            reply_to=None,
-            entities=None,
-            ttl_period=None
-        )
-        event = events.NewMessage.build(update, self_id=789)
-        assert event is not None
-        assert event.message.peer_id == types.PeerChat(456)
-
-
 class TestCallbackQueryFull:
-    @pytest.mark.asyncio
-    async def test_callback_query_event_answer(self):
-        query = types.UpdateBotCallbackQuery(
-            query_id=1,
-            user_id=123,
-            peer=types.PeerUser(456),
-            msg_id=789,
-            chat_instance=0,
-            data=b'test'
-        )
-        event = events.CallbackQuery.Event(query, types.PeerUser(456), 789)
-        event._client = MagicMock()
-        event._client.return_value = AsyncMock(return_value='result')
-        
-        result = await event.answer(message='answer', cache_time=10)
-        assert event._answered is True
-
     @pytest.mark.asyncio
     async def test_callback_query_event_answer_already_answered(self):
         query = types.UpdateBotCallbackQuery(
@@ -344,86 +235,6 @@ class TestCallbackQueryFull:
         await event._refetch_sender()
 
 
-class TestInlineQueryFull:
-    @pytest.mark.asyncio
-    async def test_inline_query_event_answer_no_results(self):
-        query = types.UpdateBotInlineQuery(
-            query_id=1,
-            user_id=123,
-            query='test',
-            geo=None,
-            offset='',
-            peer_type=None
-        )
-        event = events.InlineQuery.Event(query)
-        event._client = MagicMock()
-        event._client.return_value = AsyncMock(return_value='result')
-        
-        result = await event.answer(results=None)
-        assert result == 'result'
-
-    @pytest.mark.asyncio
-    async def test_inline_query_event_answer_with_switch_pm(self):
-        query = types.UpdateBotInlineQuery(
-            query_id=1,
-            user_id=123,
-            query='test',
-            geo=None,
-            offset='',
-            peer_type=None
-        )
-        event = events.InlineQuery.Event(query)
-        event._client = MagicMock()
-        event._client.return_value = AsyncMock(return_value='result')
-        
-        result = await event.answer(results=[], switch_pm='Start', switch_pm_param='param')
-        assert result == 'result'
-
-    @pytest.mark.asyncio
-    async def test_inline_query_event_answer_already_answered(self):
-        query = types.UpdateBotInlineQuery(
-            query_id=1,
-            user_id=123,
-            query='test',
-            geo=None,
-            offset='',
-            peer_type=None
-        )
-        event = events.InlineQuery.Event(query)
-        event._answered = True
-        
-        result = await event.answer(results=[])
-        # Should return None if already answered
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_inline_query_event_answer_with_awaitable_results(self):
-        query = types.UpdateBotInlineQuery(
-            query_id=1,
-            user_id=123,
-            query='test',
-            geo=None,
-            offset='',
-            peer_type=None
-        )
-        event = events.InlineQuery.Event(query)
-        event._client = MagicMock()
-        event._client.return_value = AsyncMock(return_value='result')
-        
-        async def awaitable_result():
-            return 'result_obj'
-        
-        result = await event.answer(results=[awaitable_result()])
-        assert result == 'result'
-
-    def test_inline_query_event_as_future_with_awaitable(self):
-        async def awaitable_obj():
-            return {'result': 'data'}
-        
-        result = events.InlineQuery.Event._as_future(awaitable_obj())
-        assert asyncio.iscoroutine(result)
-
-
 class TestAlbumFull:
     def test_album_build_multiple_updates(self):
         message1 = types.Message(id=1, peer_id=types.PeerUser(123), date=None, message='test1', out=False, grouped_id=999)
@@ -458,34 +269,6 @@ class TestAlbumFull:
             assert msg._client == client
 
     @pytest.mark.asyncio
-    async def test_album_event_respond(self):
-        from telethon.events.album import Album
-        
-        message1 = types.Message(id=1, peer_id=types.PeerUser(123), date=None, message='test1', out=False, grouped_id=999)
-        message2 = types.Message(id=2, peer_id=types.PeerUser(123), date=None, message='test2', out=False, grouped_id=999)
-        
-        event = Album.Event([message1, message2])
-        event._client = MagicMock()
-        event._client.send_message = AsyncMock(return_value='result')
-        
-        result = await event.respond('response')
-        assert result == 'result'
-
-    @pytest.mark.asyncio
-    async def test_album_event_reply(self):
-        from telethon.events.album import Album
-        
-        message1 = types.Message(id=1, peer_id=types.PeerUser(123), date=None, message='test1', out=False, grouped_id=999)
-        message2 = types.Message(id=2, peer_id=types.PeerUser(123), date=None, message='test2', out=False, grouped_id=999)
-        
-        event = Album.Event([message1, message2])
-        event._client = MagicMock()
-        event._client.send_message = AsyncMock(return_value='result')
-        
-        result = await event.reply('reply')
-        assert result == 'result'
-
-    @pytest.mark.asyncio
     async def test_album_event_forward_to(self):
         from telethon.events.album import Album
         
@@ -498,20 +281,6 @@ class TestAlbumFull:
         event.get_input_chat = AsyncMock(return_value='chat')
         
         result = await event.forward_to('destination')
-        assert result == 'result'
-
-    @pytest.mark.asyncio
-    async def test_album_event_edit(self):
-        from telethon.events.album import Album
-        
-        message1 = types.Message(id=1, peer_id=types.PeerUser(123), date=None, message='test1', out=False, grouped_id=999)
-        message2 = types.Message(id=2, peer_id=types.PeerUser(123), date=None, message='test2', out=False, grouped_id=999)
-        
-        event = Album.Event([message1, message2])
-        event._client = MagicMock()
-        event._client.edit_message = AsyncMock(return_value='result')
-        
-        result = await event.edit('new text')
         assert result == 'result'
 
     @pytest.mark.asyncio

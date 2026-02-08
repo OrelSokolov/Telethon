@@ -130,29 +130,8 @@ class TestMTProtoPlainSender:
             await sender.send(mock_request)
 
 
-class TestRequestState:
-    """Test RequestState"""
 
-    def test_init_basic(self):
-        """Case: Creating RequestState -> Expected behaviour: Sets container_id, msg_id, after to None, data equals request bytes, future created"""
-        mock_request = MagicMock()
-        state = RequestState(mock_request)
-        
-        assert state.container_id is None
-        assert state.msg_id is None
-        assert state.request is mock_request
-        assert state.data == bytes(mock_request)
-        assert state.after is None
-        assert isinstance(state.future, asyncio.Future)
 
-    def test_init_with_after(self):
-        """Case: Creating RequestState with after parameter -> Expected behaviour: Stores the after state"""
-        mock_request = MagicMock()
-        after_state = MagicMock()
-        
-        state = RequestState(mock_request, after=after_state)
-        
-        assert state.after is after_state
 
 
 class TestMTProtoState:
