@@ -72,7 +72,7 @@ class TestMTProtoPlainSender:
 
     @pytest.mark.asyncio
     async def test_init(self, mock_connection, mock_loggers):
-        """Test MTProtoPlainSender initialization"""
+        """Case: Creating MTProtoPlainSender -> Expected behaviour: Stores connection, creates state with no auth_key"""
         sender = MTProtoPlainSender(mock_connection, loggers=mock_loggers)
         assert sender._connection is mock_connection
         assert sender._state is not None
@@ -80,7 +80,7 @@ class TestMTProtoPlainSender:
 
     @pytest.mark.asyncio
     async def test_send_success(self, mock_connection, mock_loggers):
-        """Test successful send and receive"""
+        """Case: Sending mock request with valid response -> Expected behaviour: Sends data starting with zero auth_key_id"""
         sender = MTProtoPlainSender(mock_connection, loggers=mock_loggers)
         
         mock_request = MagicMock()
@@ -104,7 +104,7 @@ class TestMTProtoPlainSender:
 
     @pytest.mark.asyncio
     async def test_send_invalid_buffer_too_short(self, mock_connection, mock_loggers):
-        """Test send with buffer too short"""
+        """Case: Receiving too short buffer -> Expected behaviour: Raises InvalidBufferError"""
         sender = MTProtoPlainSender(mock_connection, loggers=mock_loggers)
         
         mock_request = MagicMock()
@@ -116,7 +116,7 @@ class TestMTProtoPlainSender:
 
     @pytest.mark.asyncio
     async def test_send_bad_auth_key_id(self, mock_connection, mock_loggers):
-        """Test send with bad auth key id"""
+        """Case: Receiving response with wrong auth_key_id -> Expected behaviour: Raises AssertionError"""
         sender = MTProtoPlainSender(mock_connection, loggers=mock_loggers)
         
         mock_request = MagicMock()
@@ -134,7 +134,7 @@ class TestRequestState:
     """Test RequestState"""
 
     def test_init_basic(self):
-        """Test basic RequestState initialization"""
+        """Case: Creating RequestState -> Expected behaviour: Sets container_id, msg_id, after to None, data equals request bytes, future created"""
         mock_request = MagicMock()
         state = RequestState(mock_request)
         
@@ -146,7 +146,7 @@ class TestRequestState:
         assert isinstance(state.future, asyncio.Future)
 
     def test_init_with_after(self):
-        """Test RequestState initialization with after parameter"""
+        """Case: Creating RequestState with after parameter -> Expected behaviour: Stores the after state"""
         mock_request = MagicMock()
         after_state = MagicMock()
         
@@ -159,7 +159,7 @@ class TestMTProtoState:
     """Test MTProtoState"""
 
     def test_init(self, auth_key, mock_loggers):
-        """Test MTProtoState initialization"""
+        """Case: Creating MTProtoState with auth_key and loggers -> Expected behaviour: Sets auth_key, time_offset=0, salt=0, id initialized, _sequence=0, _last_msg_id=0, _ignore_count=0"""
         state = MTProtoState(auth_key, loggers=mock_loggers)
         
         assert state.auth_key is auth_key
@@ -171,7 +171,7 @@ class TestMTProtoState:
         assert state._ignore_count == 0
 
     def test_reset(self, mtproto_state):
-        """Test reset method"""
+        """Case: Resetting state -> Expected behaviour: Changes id, sets _sequence=0, _last_msg_id=0, _highest_remote_id=0, _ignore_count=0, empties _recent_remote_ids"""
         original_id = mtproto_state.id
         mtproto_state.reset()
         
@@ -183,7 +183,7 @@ class TestMTProtoState:
         assert len(mtproto_state._recent_remote_ids) == 0
 
     def test_update_message_id(self, mtproto_state):
-        """Test update_message_id"""
+        """Case: Updating message msg_id -> Expected behaviour: Changes msg_id to new generated ID"""
         mock_message = MagicMock()
         mock_message.msg_id = 12345
         
@@ -193,7 +193,7 @@ class TestMTProtoState:
         assert mock_message.msg_id == 67890
 
     def test_calc_key_client(self, mtproto_state):
-        """Test _calc_key for client"""
+        """Case: Calculating AES key/IV for client (is_client=True) -> Expected behaviour: Returns 32-byte key and 32-byte IV"""
         auth_key = os.urandom(256)
         msg_key = os.urandom(16)
         
@@ -203,7 +203,7 @@ class TestMTProtoState:
         assert len(aes_iv) == 32
 
     def test_calc_key_server(self, mtproto_state):
-        """Test _calc_key for server"""
+        """Case: Calculating AES key/IV for server (is_client=False) -> Expected behaviour: Returns 32-byte key and 32-byte IV"""
         auth_key = os.urandom(256)
         msg_key = os.urandom(16)
         
@@ -213,7 +213,7 @@ class TestMTProtoState:
         assert len(aes_iv) == 32
 
     def test_write_data_as_message_basic(self, mtproto_state):
-        """Test write_data_as_message without after_id"""
+        """Case: Writing data to buffer without after_id -> Expected behaviour: Returns msg_id, contains data in buffer"""
         buffer = BytesIO()
         data = b'\x01\x02\x03\x04'
         
@@ -223,7 +223,7 @@ class TestMTProtoState:
         assert len(buffer.getvalue()) > 0
 
     def test_write_data_as_message_with_after(self, mtproto_state):
-        """Test write_data_as_message with after_id"""
+        """Case: Writing data to buffer with after_id -> Expected behaviour: Returns msg_id, contains data in buffer"""
         buffer = BytesIO()
         data = b'\x01\x02\x03\x04'
         after_id = 12345
@@ -234,7 +234,7 @@ class TestMTProtoState:
         assert len(buffer.getvalue()) > 0
 
     def test_encrypt_message_data(self, mtproto_state):
-        """Test encrypt_message_data"""
+        """Case: Encrypting message data with salt -> Expected behaviour: Returns encrypted output with key_id (8 bytes) + msg_key (16 bytes)"""
         data = b'\x01\x02\x03\x04\x05'
         mtproto_state.salt = 12345
         
@@ -244,7 +244,7 @@ class TestMTProtoState:
         assert len(encrypted) >= 8 + 16  # key_id + msg_key
 
     def test_encrypt_message_data_different_salts(self, mtproto_state):
-        """Test encrypt with different salt values"""
+        """Case: Encrypting same data with different salt values -> Expected behaviour: Produces different encrypted outputs"""
         data = b'test data'
         
         mtproto_state.salt = 100
@@ -256,14 +256,14 @@ class TestMTProtoState:
         assert encrypted1 != encrypted2
 
     def test_decrypt_message_data_invalid_length(self, mtproto_state):
-        """Test decrypt_message_data with invalid length"""
+        """Case: Attempting to decrypt with too short buffer -> Expected behaviour: Raises InvalidBufferError"""
         body = b'\x00\x00\x00\x00'
         
         with pytest.raises(InvalidBufferError):
             mtproto_state.decrypt_message_data(body)
 
     def test_decrypt_message_data_invalid_key_id(self, mtproto_state):
-        """Test decrypt_message_data with invalid key ID"""
+        """Case: Attempting to decrypt with wrong key_id -> Expected behaviour: Raises SecurityError with 'invalid auth key'"""
         auth_key = AuthKey(os.urandom(256))
         mtproto_state.auth_key = auth_key
         
@@ -273,7 +273,7 @@ class TestMTProtoState:
             mtproto_state.decrypt_message_data(body)
 
     def test_decrypt_message_data_valid(self, mtproto_state):
-        """Test decrypt_message_data with valid encrypted message"""
+        """Case: Encrypting then validating structure -> Expected behaviour: Key_id matches auth_key.key_id, output >= 24 bytes"""
         auth_key = AuthKey(os.urandom(256))
         mtproto_state.auth_key = auth_key
         
@@ -291,7 +291,7 @@ class TestMTProtoState:
         assert received_key_id == auth_key.key_id
 
     def test_decrypt_message_data_invalid_msg_key(self, mtproto_state):
-        """Test decrypt_message_data with invalid msg_key"""
+        """Case: Decrypting with wrong msg_key -> Expected behaviour: Raises SecurityError with "doesn't match" """
         auth_key = AuthKey(os.urandom(256))
         mtproto_state.auth_key = auth_key
         
@@ -308,7 +308,7 @@ class TestMTProtoState:
             mtproto_state.decrypt_message_data(body)
 
     def test_decrypt_message_data_duplicate(self, mtproto_state):
-        """Test decrypt_message_data duplicate handling"""
+        """Case: Simulating duplicate message in _recent_remote_ids -> Expected behaviour: Tracks the message ID in recent IDs"""
         auth_key = AuthKey(os.urandom(256))
         mtproto_state.auth_key = auth_key
         
@@ -321,7 +321,7 @@ class TestMTProtoState:
         assert remote_msg_id in mtproto_state._recent_remote_ids
 
     def test_decrypt_message_data_time_window(self, mtproto_state):
-        """Test decrypt_message_data time window constants"""
+        """Case: Verifying time window constants -> Expected behaviour: MSG_TOO_NEW_DELTA=30, MSG_TOO_OLD_DELTA=300"""
         # Verify the time window constants are defined correctly
         from telethon.network.mtprotostate import MSG_TOO_NEW_DELTA, MSG_TOO_OLD_DELTA
         
@@ -332,7 +332,7 @@ class TestMTProtoState:
         assert mtproto_state.time_offset == 0
 
     def test_count_ignored(self, mtproto_state):
-        """Test _count_ignored method"""
+        """Case: Counting ignored messages -> Expected behaviour: Increments _ignore_count, SecurityError raised when count reaches 10"""
         mtproto_state._ignore_count = 8
         mtproto_state._count_ignored()
         
@@ -344,7 +344,7 @@ class TestMTProtoState:
             mtproto_state._count_ignored()
 
     def test_update_time_offset_first_bad_msg(self, mtproto_state):
-        """Test update_time_offset functionality"""
+        """Case: Updating time offset with bad message -> Expected behaviour: Returns integer offset, sets _last_msg_id"""
         msg_id = (int(time.time()) << 32) | 1
         
         old_offset = mtproto_state.time_offset
@@ -356,7 +356,7 @@ class TestMTProtoState:
         assert mtproto_state._last_msg_id > 0
 
     def test_decrypt_message_data_too_many_ignored(self, mtproto_state):
-        """Test decrypt_message_data with too many consecutive ignored messages"""
+        """Case: Setting ignore count to max -> Expected behaviour: Verifies _ignore_count=10 threshold"""
         # Set ignore count to max
         mtproto_state._ignore_count = 10
         
@@ -365,7 +365,7 @@ class TestMTProtoState:
         assert mtproto_state._ignore_count == 10
 
     def test_get_new_msg_id(self, mtproto_state):
-        """Test _get_new_msg_id"""
+        """Case: Generating new message IDs -> Expected behaviour: Returns positive IDs, second ID > first ID"""
         msg_id1 = mtproto_state._get_new_msg_id()
         msg_id2 = mtproto_state._get_new_msg_id()
         
@@ -374,14 +374,14 @@ class TestMTProtoState:
         # msg_id can be even or odd depending on timing, just check it's positive
 
     def test_get_new_msg_id_increasing(self, mtproto_state):
-        """Test that _get_new_msg_id always increases"""
+        """Case: Generating ID with high starting point -> Expected behaviour: ID >= _last_msg_id"""
         mtproto_state._last_msg_id = 999999999999999
         msg_id = mtproto_state._get_new_msg_id()
         
         assert msg_id >= mtproto_state._last_msg_id
 
     def test_update_time_offset(self, mtproto_state):
-        """Test update_time_offset"""
+        """Case: Updating time offset with correct message -> Expected behaviour: Returns integer offset, time_offset changed or zero"""
         correct_msg_id = (int(time.time()) << 32) | 1
         
         old_offset = mtproto_state.time_offset
@@ -391,14 +391,14 @@ class TestMTProtoState:
         assert mtproto_state.time_offset != old_offset or mtproto_state.time_offset == 0
 
     def test_get_seq_no_content_related(self, mtproto_state):
-        """Test _get_seq_no for content-related messages"""
+        """Case: Getting sequence number for content-related message -> Expected behaviour: Returns odd number, _sequence incremented"""
         seq_no = mtproto_state._get_seq_no(content_related=True)
         
         assert seq_no % 2 == 1  # Should be odd
         assert mtproto_state._sequence > 0
 
     def test_get_seq_no_not_content_related(self, mtproto_state):
-        """Test _get_seq_no for non-content-related messages"""
+        """Case: Getting sequence number for non-content-related message -> Expected behaviour: Returns even number, _sequence unchanged"""
         seq_no = mtproto_state._get_seq_no(content_related=False)
         
         assert seq_no % 2 == 0  # Should be even
@@ -409,7 +409,7 @@ class TestMTProtoSender:
     """Test MTProtoSender"""
 
     def test_init(self, auth_key, mock_loggers):
-        """Test MTProtoSender initialization"""
+        """Case: Creating MTProtoSender with defaults -> Expected behaviour: Sets auth_key, _retries=5, _delay=1, _auto_reconnect=True, _connect_timeout=None, _user_connected=False, _reconnecting=False, _connection=None"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         assert sender.auth_key is auth_key
@@ -422,7 +422,7 @@ class TestMTProtoSender:
         assert sender._connection is None
 
     def test_init_custom_params(self, auth_key, mock_loggers):
-        """Test MTProtoSender initialization with custom parameters"""
+        """Case: Creating MTProtoSender with custom parameters -> Expected behaviour: Assigns custom values correctly"""
         sender = MTProtoSender(
             auth_key,
             loggers=mock_loggers,
@@ -438,7 +438,7 @@ class TestMTProtoSender:
         assert sender._connect_timeout == 10
 
     def test_is_connected(self, auth_key, mock_loggers):
-        """Test is_connected"""
+        """Case: Checking connection status -> Expected behaviour: Returns False initially, True after setting _user_connected=True"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         assert sender.is_connected() is False
@@ -447,7 +447,7 @@ class TestMTProtoSender:
         assert sender.is_connected() is True
 
     def test_transport_connected(self, auth_key, mock_loggers, mock_connection):
-        """Test _transport_connected"""
+        """Case: Checking transport connection -> Expected behaviour: Returns True when connected and not reconnecting, False when reconnecting or disconnected"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._connection = mock_connection
         
@@ -462,7 +462,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_connect_success(self, auth_key, mock_loggers, mock_connection):
-        """Test successful connect"""
+        """Case: Connecting to mock connection -> Expected behaviour: Returns True, sets _user_connected=True, assigns _connection"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         result = await sender.connect(mock_connection)
@@ -473,7 +473,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_connect_already_connected(self, auth_key, mock_loggers, mock_connection):
-        """Test connect when already connected"""
+        """Case: Connecting when already connected -> Expected behaviour: Returns False"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = True
         
@@ -483,7 +483,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_disconnect(self, auth_key, mock_loggers, mock_connection):
-        """Test disconnect"""
+        """Case: Disconnecting -> Expected behaviour: Sets _user_connected=False"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._connection = mock_connection
         sender._user_connected = True
@@ -494,7 +494,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_send_disconnected(self, auth_key, mock_loggers):
-        """Test send while disconnected"""
+        """Case: Sending request while disconnected -> Expected behaviour: Raises ConnectionError"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = False
         
@@ -505,7 +505,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_send_single_request(self, auth_key, mock_loggers):
-        """Test sending a single request"""
+        """Case: Sending single request -> Expected behaviour: Returns Future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = True
         
@@ -518,7 +518,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_send_list_requests(self, auth_key, mock_loggers):
-        """Test sending a list of requests"""
+        """Case: Sending list of requests -> Expected behaviour: Returns list of 2 Futures"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = True
         
@@ -534,7 +534,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_send_list_ordered(self, auth_key, mock_loggers):
-        """Test sending ordered requests"""
+        """Case: Sending ordered requests -> Expected behaviour: Returns list of 2 Futures"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = True
         
@@ -549,7 +549,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_send_struct_error(self, auth_key, mock_loggers):
-        """Test send with struct error"""
+        """Case: Sending request that raises struct.error -> Expected behaviour: Raises struct.error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = True
         
@@ -564,14 +564,14 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_disconnected_property(self, auth_key, mock_loggers):
-        """Test disconnected property"""
+        """Case: Accessing disconnected property -> Expected behaviour: Returns Future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         future = sender.disconnected
         assert future is not None
 
     def test_keepalive_ping_first(self, auth_key, mock_loggers):
-        """Test _keepalive_ping with first ping"""
+        """Case: Sending first keepalive ping -> Expected behaviour: Sets _ping to rnd_id, calls send once"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         rnd_id = 12345
         
@@ -582,7 +582,7 @@ class TestMTProtoSender:
         mock_send.assert_called_once()
 
     def test_keepalive_ping_no_response(self, auth_key, mock_loggers):
-        """Test _keepalive_ping when no response received"""
+        """Case: Sending second ping without response -> Expected behaviour: Keeps _ping unchanged, calls _start_reconnect"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._ping = 12345
         rnd_id = 67890
@@ -595,7 +595,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_pong(self, auth_key, mock_loggers):
-        """Test _handle_pong"""
+        """Case: Handling matching pong -> Expected behaviour: Sets _ping to None, resolves pending state future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -613,7 +613,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_pong_no_state(self, auth_key, mock_loggers):
-        """Test _handle_pong with no pending state"""
+        """Case: Handling pong with no pending state -> Expected behaviour: Does not raise error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._ping = 67890
         
@@ -624,7 +624,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_bad_server_salt(self, auth_key, mock_loggers):
-        """Test _handle_bad_server_salt"""
+        """Case: Handling BadServerSalt -> Expected behaviour: Updates state.salt to new_server_salt"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -639,7 +639,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_bad_notification_error_16(self, auth_key, mock_loggers):
-        """Test _handle_bad_notification with error code 16"""
+        """Case: Handling BadMsgNotification with error 16 (msg_id too low) -> Expected behaviour: Adds request to send_queue"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -655,7 +655,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_bad_notification_error_17(self, auth_key, mock_loggers):
-        """Test _handle_bad_notification with error code 17"""
+        """Case: Handling BadMsgNotification with error 17 (msg_id too high) -> Expected behaviour: Adds request to send_queue"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -671,7 +671,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_bad_notification_error_32(self, auth_key, mock_loggers):
-        """Test _handle_bad_notification with error code 32"""
+        """Case: Handling BadMsgNotification with error 32 (msg_seqno too low) -> Expected behaviour: Sets _sequence >= 64"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -686,7 +686,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_bad_notification_error_33(self, auth_key, mock_loggers):
-        """Test _handle_bad_notification with error code 33"""
+        """Case: Handling BadMsgNotification with error 33 (msg_seqno too high) -> Expected behaviour: Decrements _sequence by 16"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._state._sequence = 100
         
@@ -702,7 +702,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_bad_notification_other_error(self, auth_key, mock_loggers):
-        """Test _handle_bad_notification with other error code"""
+        """Case: Handling BadMsgNotification with other error code -> Expected behaviour: Sets exception on pending state future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -718,7 +718,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_detailed_info(self, auth_key, mock_loggers):
-        """Test _handle_detailed_info"""
+        """Case: Handling MsgDetailedInfo -> Expected behaviour: Adds answer_msg_id to _pending_ack"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         detailed_info = MsgDetailedInfo(msg_id=12345, answer_msg_id=67890, bytes=100, status=1)
@@ -730,7 +730,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_new_detailed_info(self, auth_key, mock_loggers):
-        """Test _handle_new_detailed_info"""
+        """Case: Handling MsgNewDetailedInfo -> Expected behaviour: Adds answer_msg_id to _pending_ack"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         detailed_info = MsgNewDetailedInfo(answer_msg_id=67890, bytes=100, status=1)
@@ -742,7 +742,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_new_session_created(self, auth_key, mock_loggers):
-        """Test _handle_new_session_created"""
+        """Case: Handling NewSessionCreated -> Expected behaviour: Updates state.salt to server_salt"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         new_session = NewSessionCreated(first_msg_id=12345, unique_id=67890, server_salt=99999)
@@ -754,7 +754,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_ack_log_out(self, auth_key, mock_loggers):
-        """Test _handle_ack for LogOutRequest"""
+        """Case: Handling ack for LogOutRequest -> Expected behaviour: Removes state from pending, resolves future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -772,7 +772,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_ack_other_request(self, auth_key, mock_loggers):
-        """Test _handle_ack for non-LogOutRequest"""
+        """Case: Handling ack for non-LogOutRequest -> Expected behaviour: Does not resolve future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -787,7 +787,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_future_salts(self, auth_key, mock_loggers):
-        """Test _handle_future_salts"""
+        """Case: Handling FutureSalts -> Expected behaviour: Removes pending state by message.msg_id"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -804,7 +804,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_state_forgotten(self, auth_key, mock_loggers):
-        """Test _handle_state_forgotten"""
+        """Case: Handling MsgsStateReq -> Expected behaviour: Adds state to send_queue"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         msg_ids = [12345, 67890]
@@ -818,7 +818,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_msg_all(self, auth_key, mock_loggers):
-        """Test _handle_msg_all"""
+        """Case: Handling MsgsAllInfo -> Expected behaviour: Does not raise error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         msg_all = MsgsAllInfo(msg_ids=[12345, 67890], info=b'\x00')
@@ -828,7 +828,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_destroy_session_ok(self, auth_key, mock_loggers):
-        """Test _handle_destroy_session for DestroySessionOk"""
+        """Case: Handling DestroySessionOk -> Expected behaviour: Removes state, resolves future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -846,7 +846,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_destroy_session_none(self, auth_key, mock_loggers):
-        """Test _handle_destroy_session for DestroySessionNone"""
+        """Case: Handling DestroySessionNone -> Expected behaviour: Removes state, resolves future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -864,7 +864,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_destroy_session_mismatch(self, auth_key, mock_loggers):
-        """Test _handle_destroy_session with mismatched session_id"""
+        """Case: Handling DestroySessionOk with mismatched session_id -> Expected behaviour: Does not find or resolve state"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -879,7 +879,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_destroy_auth_key_ok(self, auth_key, mock_loggers):
-        """Test _handle_destroy_auth_key for DestroyAuthKeyOk"""
+        """Case: Handling DestroyAuthKeyOk -> Expected behaviour: Removes state, resolves future, calls disconnect"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -899,7 +899,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_destroy_auth_key_none(self, auth_key, mock_loggers):
-        """Test _handle_destroy_auth_key for DestroyAuthKeyNone"""
+        """Case: Handling DestroyAuthKeyNone -> Expected behaviour: Removes state, resolves future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -917,7 +917,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_destroy_auth_key_fail(self, auth_key, mock_loggers):
-        """Test _handle_destroy_auth_key for DestroyAuthKeyFail"""
+        """Case: Handling DestroyAuthKeyFail -> Expected behaviour: Removes state, resolves future"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -935,7 +935,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_container(self, auth_key, mock_loggers):
-        """Test _handle_container"""
+        """Case: Handling MessageContainer with inner messages -> Expected behaviour: Processes inner messages without error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         inner_msg1 = TLMessage(msg_id=12345, seq_no=1, obj=MagicMock())
@@ -948,7 +948,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_process_message(self, auth_key, mock_loggers):
-        """Test _process_message"""
+        """Case: Processing message with registered handler -> Expected behaviour: Calls handler, adds message to _pending_ack"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_obj = MagicMock()
@@ -965,7 +965,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_pop_states_by_msg_id(self, auth_key, mock_loggers):
-        """Test _pop_states by message ID"""
+        """Case: Popping states by message ID -> Expected behaviour: Returns state and removes from pending"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -979,7 +979,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_pop_states_by_container_id(self, auth_key, mock_loggers):
-        """Test _pop_states by container ID"""
+        """Case: Popping states by container ID -> Expected behaviour: Returns state"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -994,7 +994,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_pop_states_by_ack(self, auth_key, mock_loggers):
-        """Test _pop_states by last ack"""
+        """Case: Popping states by last ack -> Expected behaviour: Returns state and removes it"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         mock_state = MagicMock()
@@ -1008,7 +1008,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_pop_states_not_found(self, auth_key, mock_loggers):
-        """Test _pop_states when not found"""
+        """Case: Trying to pop non-existent state -> Expected behaviour: Returns empty list"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         result = sender._pop_states(99999)
@@ -1017,7 +1017,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_update_valid(self, auth_key, mock_loggers):
-        """Test _handle_update with valid update"""
+        """Case: Handling valid update -> Expected behaviour: Adds update to _updates_queue"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._updates_queue = asyncio.Queue()
         
@@ -1031,7 +1031,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_update_invalid(self, auth_key, mock_loggers):
-        """Test _handle_update with invalid object"""
+        """Case: Handling invalid update object -> Expected behaviour: Does not add update, does not raise error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._updates_queue = asyncio.Queue()
         
@@ -1045,7 +1045,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_disconnect_no_connection(self, auth_key, mock_loggers):
-        """Test _disconnect when no connection exists"""
+        """Case: Disconnecting with no connection -> Expected behaviour: Does not raise error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._connection = None
         
@@ -1053,7 +1053,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_disconnect_with_pending_states(self, auth_key, mock_loggers, mock_connection):
-        """Test _disconnect with pending states"""
+        """Case: Disconnecting with pending states -> Expected behaviour: Clears all pending states, cancels futures"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._connection = mock_connection
         sender._user_connected = True
@@ -1069,7 +1069,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_update_other(self, auth_key, mock_loggers):
-        """Test _handle_update with non-update object"""
+        """Case: Handling non-update object -> Expected behaviour: Does not raise error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._updates_queue = asyncio.Queue()
         
@@ -1082,7 +1082,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_gzip_packed(self, auth_key, mock_loggers):
-        """Test _handle_gzip_packed"""
+        """Case: Handling GzipPacked -> Expected behaviour: Calls _process_message for decompressed data"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         # Mock inner message processing
@@ -1097,7 +1097,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_send_no_tlrequest(self, auth_key, mock_loggers):
-        """Test send with non-TLRequest object"""
+        """Case: Sending non-TLRequest object -> Expected behaviour: Returns Future, does not raise error"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = True
         
@@ -1111,7 +1111,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_start_reconnect_not_connected(self, auth_key, mock_loggers):
-        """Test _start_reconnect when not connected"""
+        """Case: Calling _start_reconnect when not connected -> Expected behaviour: Keeps _reconnecting=False"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = False
         
@@ -1123,7 +1123,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_start_reconnect_already_reconnecting(self, auth_key, mock_loggers):
-        """Test _start_reconnect when already reconnecting"""
+        """Case: Calling _start_reconnect when already reconnecting -> Expected behaviour: Keeps _reconnecting=True"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         sender._user_connected = True
         sender._reconnecting = True
@@ -1136,7 +1136,7 @@ class TestMTProtoSender:
 
     @pytest.mark.asyncio
     async def test_handle_gzip_packed(self, auth_key, mock_loggers):
-        """Test _handle_gzip_packed"""
+        """Case: Handling GzipPacked with valid data -> Expected behaviour: Fails on deserialization but tests the path"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
         
         # Create a mock gzip-packed message that will deserialized successfully
