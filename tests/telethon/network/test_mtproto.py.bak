@@ -1222,6 +1222,235 @@ class TestMTProtoSender:
         assert mock_state.future.exception() == error
 
     @pytest.mark.asyncio
+    async def test_send_loop_with_pending_ack(self, auth_key, mock_loggers):
+        """Case: Send loop with pending acknowledgments -> Expected behaviour: Sends ack messages"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._pending_ack.add(12345)
+        sender._pending_ack.add(67890)
+        
+        # Mock send_queue to return empty data to stop the loop
+        async def mock_get():
+            return ([], b'')
+        
+        sender._send_queue.get = mock_get
+        
+        # This should clear pending_ack and add ack message to queue
+        task = asyncio.create_task(sender._send_loop())
+        await asyncio.sleep(0.01)  # Let the loop run
+        task.cancel()
+        
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_send_loop_with_empty_data(self, auth_key, mock_loggers):
+        """Case: Send loop receives empty data -> Expected behaviour: Continues without sending"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        
+        # Mock send_queue to return empty data, then non-empty
+        call_count = [0]
+        async def mock_get():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ([], b'')  # Empty data
+            else:
+                sender._user_connected = False  # Stop the loop
+                return ([], b'\x01')
+        
+        sender._send_queue.get = mock_get
+        sender._connection = MagicMock()
+        sender._connection.send = AsyncMock()
+        
+        task = asyncio.create_task(sender._send_loop())
+        
+        # Let the loop process both calls
+        for _ in range(10):
+            await asyncio.sleep(0.01)
+            if not sender._user_connected:
+                break
+        
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_send_loop_ioerror(self, auth_key, mock_loggers):
+        """Case: Send loop encounters IOError -> Expected behaviour: Starts reconnect, returns"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        sender._connection.send = AsyncMock(side_effect=IOError('Send failed'))
+        
+        # Mock send_queue to return data
+        async def mock_get():
+            sender._user_connected = False  # Stop the loop after this
+            return ([], b'\x01\x02\x03')
+        
+        sender._send_queue.get = mock_get
+        
+        with patch.object(sender, '_start_reconnect') as mock_reconnect:
+            await sender._send_loop()
+            mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_cancelled(self, auth_key, mock_loggers):
+        """Case: Receive loop cancelled -> Expected behaviour: Raises CancelledError"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        
+        call_count = [0]
+        async def mock_recv():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                raise asyncio.CancelledError()
+            return b'\x00'
+        
+        sender._connection.recv = mock_recv
+        
+        with pytest.raises(asyncio.CancelledError):
+            await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_ioerror(self, auth_key, mock_loggers):
+        """Case: Receive loop encounters IOError -> Expected behaviour: Starts reconnect, returns"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        sender._connection.recv = AsyncMock(side_effect=IOError('Receive failed'))
+        
+        with patch.object(sender, '_start_reconnect') as mock_reconnect:
+            await sender._recv_loop()
+            mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_invalid_buffer_flood(self, auth_key, mock_loggers):
+        """Case: Receive loop gets flood error (429) -> Expected behaviour: Disconnects with error"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        
+        flood_error = InvalidBufferError(b'', code=429)
+        sender._connection.recv = AsyncMock(side_effect=flood_error)
+        
+        with patch.object(sender, '_disconnect', new=AsyncMock()) as mock_disconnect:
+            await sender._recv_loop()
+            mock_disconnect.assert_called_once()
+            assert mock_disconnect.call_args[1]['error'] == flood_error
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_invalid_buffer_other(self, auth_key, mock_loggers):
+        """Case: Receive loop gets other InvalidBufferError -> Expected behaviour: Starts reconnect, returns"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        
+        other_error = InvalidBufferError(b'', code=500)
+        sender._connection.recv = AsyncMock(side_effect=other_error)
+        
+        with patch.object(sender, '_start_reconnect') as mock_reconnect:
+            await sender._recv_loop()
+            mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_type_not_found(self, auth_key, mock_loggers):
+        """Case: Receive loop gets unknown type -> Expected behaviour: Logs and continues"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        
+        from telethon.tl.types import Bool
+        from telethon.extensions import BinaryWriter
+        
+        # Create valid message with Bool type
+        buffer = BytesIO()
+        writer = BinaryWriter(buffer)
+        bool_obj = Bool(False)
+        bool_obj.on_send(writer)
+        data = buffer.getvalue()
+        
+        sender._state.salt = 12345
+        encrypted = sender._state.encrypt_message_data(data)
+        sender._connection.recv = AsyncMock(return_value=encrypted)
+        
+        # Set _user_connected to False after one iteration to stop the loop
+        call_count = [0]
+        original_recv = sender._connection.recv
+        async def recv_once():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return await original_recv()
+            raise asyncio.CancelledError()
+        
+        sender._connection.recv = recv_once
+        
+        # Should handle TypeNotFoundError and continue
+        with pytest.raises(asyncio.CancelledError):
+            await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_security_error(self, auth_key, mock_loggers):
+        """Case: Receive loop gets security error -> Expected behaviour: Logs and continues"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        
+        # Create message with wrong key_id to trigger SecurityError
+        body = struct.pack('<Q', 99999) + os.urandom(16) + os.urandom(32)
+        sender._connection.recv = AsyncMock(return_value=body)
+        
+        call_count = [0]
+        async def recv_once():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return body
+            raise asyncio.CancelledError()
+        
+        sender._connection.recv = recv_once
+        
+        # Should handle SecurityError and continue
+        with pytest.raises(asyncio.CancelledError):
+            await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_buffer_error_404(self, auth_key, mock_loggers):
+        """Case: Receive loop gets InvalidBufferError with code 404 -> Expected behaviour: Disconnects with AuthKeyNotFound"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._user_connected = True
+        sender._connection = MagicMock()
+        
+        from telethon.extensions import BinaryWriter
+        from telethon.tl.types import Bool
+        
+        # Create message that will fail with 404
+        buffer = BytesIO()
+        writer = BinaryWriter(buffer)
+        bool_obj = Bool(False)
+        bool_obj.on_send(writer)
+        data = buffer.getvalue()
+        
+        sender._state.salt = 12345
+        encrypted = sender._state.encrypt_message_data(data)
+        
+        # Patch decrypt_message_data to raise InvalidBufferError with code 404
+        async def mock_decrypt(body):
+            raise InvalidBufferError(b'', code=404)
+        
+        sender._state.decrypt_message_data = mock_decrypt
+        sender._connection.recv = AsyncMock(return_value=encrypted)
+        
+        with patch.object(sender, '_disconnect', new=AsyncMock()) as mock_disconnect:
+            await sender._recv_loop()
+            mock_disconnect.assert_called_once()
+            assert isinstance(mock_disconnect.call_args[1]['error'], AuthKeyNotFound)
+
+    @pytest.mark.asyncio
     async def test_handle_rpc_result_no_state(self, auth_key, mock_loggers):
         """Case: Handling RPC result without pending state -> Expected behaviour: Logs and returns"""
         sender = MTProtoSender(auth_key, loggers=mock_loggers)
@@ -1703,6 +1932,235 @@ class TestMTProtoSender:
         
         with patch.object(sender, '_connect', new=mock_connect):
             await sender._reconnect(None)  # Should log warning but not disconnect
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_io_error(self, auth_key, mock_loggers, mock_connection):
+        """Case: Receive loop gets IOError -> Expected behaviour: Starts reconnect"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_connection.recv.side_effect = IOError('Connection closed')
+        
+        with patch.object(sender, '_start_reconnect', new=Mock()) as mock_reconnect:
+            await sender._recv_loop()
+            
+            mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_incomplete_read(self, auth_key, mock_loggers, mock_connection):
+        """Case: Receive loop gets IncompleteReadError -> Expected behaviour: Starts reconnect"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_connection.recv.side_effect = asyncio.IncompleteReadError(b'', 0)
+        
+        with patch.object(sender, '_start_reconnect', new=Mock()) as mock_reconnect:
+            await sender._recv_loop()
+            
+            mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_invalid_buffer_flood(self, auth_key, mock_loggers, mock_connection):
+        """Case: Receive loop gets flood error (429) -> Expected behaviour: Disconnects with error"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        sender.__disconnected = asyncio.Future()
+        
+        mock_connection.recv.side_effect = InvalidBufferError(b'', code=429)
+        
+        with patch.object(sender, '_disconnect', new=AsyncMock()) as mock_disconnect:
+            await sender._recv_loop()
+            
+            mock_disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_type_not_found(self, auth_key, mock_loggers, mock_connection):
+        """Case: Receive loop gets TypeNotFoundError -> Expected behaviour: Logs info, continues"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_connection.recv.side_effect = [b'', asyncio.CancelledError()]
+        
+        with patch.object(sender._state, 'decrypt_message_data', side_effect=[
+            TypeNotFoundError(0x12345678, b''),
+            asyncio.CancelledError()
+        ]):
+            with patch.object(sender, '_start_reconnect', new=Mock()):
+                with pytest.raises(asyncio.CancelledError):
+                    await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_security_error(self, auth_key, mock_loggers, mock_connection):
+        """Case: Receive loop gets SecurityError -> Expected behaviour: Logs warning, continues"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_connection.recv.side_effect = [b'', asyncio.CancelledError()]
+        
+        with patch.object(sender._state, 'decrypt_message_data', side_effect=[
+            SecurityError('Security error'),
+            asyncio.CancelledError()
+        ]):
+            with patch.object(sender, '_start_reconnect', new=Mock()):
+                with pytest.raises(asyncio.CancelledError):
+                    await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_buffer_error(self, auth_key, mock_loggers, mock_connection):
+        """Case: Receive loop gets BufferError -> Expected behaviour: Starts reconnect"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_connection.recv.side_effect = [b'', asyncio.CancelledError()]
+        
+        with patch.object(sender._state, 'decrypt_message_data', side_effect=[
+            BufferError('Buffer error'),
+            asyncio.CancelledError()
+        ]):
+            with patch.object(sender, '_start_reconnect', new=Mock()):
+                with pytest.raises(asyncio.CancelledError):
+                    await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_exception(self, auth_key, mock_loggers, mock_connection):
+        """Case: Receive loop gets unexpected exception -> Expected behaviour: Starts reconnect"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_connection.recv.side_effect = [b'', asyncio.CancelledError()]
+        
+        with patch.object(sender._state, 'decrypt_message_data', side_effect=[
+            Exception('Unexpected error'),
+            asyncio.CancelledError()
+        ]):
+            with patch.object(sender, '_start_reconnect', new=Mock()):
+                with pytest.raises(asyncio.CancelledError):
+                    await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_recv_loop_process_exception(self, auth_key, mock_loggers, mock_connection):
+        """Case: Process message raises exception -> Expected behaviour: Logs exception, continues"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_connection.recv.side_effect = [b'', asyncio.CancelledError()]
+        
+        mock_message = MagicMock()
+        with patch.object(sender._state, 'decrypt_message_data', return_value=mock_message):
+            with patch.object(sender, '_process_message', side_effect=[Exception('Process error'), None]):
+                with patch.object(sender, '_start_reconnect', new=Mock()):
+                    with pytest.raises(asyncio.CancelledError):
+                        await sender._recv_loop()
+
+    @pytest.mark.asyncio
+    async def test_send_loop_io_error(self, auth_key, mock_loggers, mock_connection):
+        """Case: Send loop gets IOError -> Expected behaviour: Starts reconnect"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        sender._reconnecting = False
+        
+        call_count = [0]
+        async def mock_get():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ([MagicMock(msg_id=12345)], b'data')
+            else:
+                sender._user_connected = False
+                return ([], b'')
+        
+        sender._send_queue.get = mock_get
+        mock_connection.send.side_effect = IOError('Send failed')
+        
+        with patch.object(sender, '_start_reconnect', new=Mock()) as mock_reconnect:
+            task = asyncio.create_task(sender._send_loop())
+            await asyncio.sleep(0.01)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            
+            mock_reconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_send_loop_non_tlrequest(self, auth_key, mock_loggers, mock_connection):
+        """Case: Send loop processes non-TLRequest -> Expected behaviour: Does not add to pending_state"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_state = MagicMock()
+        mock_state.msg_id = 12345
+        mock_state.request = MagicMock()
+        
+        call_count = [0]
+        async def mock_get():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ([mock_state], b'data')
+            else:
+                sender._user_connected = False
+                return ([], b'')
+        
+        sender._send_queue.get = mock_get
+        
+        task = asyncio.create_task(sender._send_loop())
+        await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        
+        assert 12345 not in sender._pending_state
+
+    @pytest.mark.asyncio
+    async def test_send_loop_list_states(self, auth_key, mock_loggers, mock_connection):
+        """Case: Send loop processes list of states -> Expected behaviour: Adds TLRequests to pending_state"""
+        sender = MTProtoSender(auth_key, loggers=mock_loggers)
+        sender._connection = mock_connection
+        sender._user_connected = True
+        
+        mock_state1 = MagicMock()
+        mock_state1.msg_id = 12345
+        mock_state1.request = MagicMock()
+        mock_state1.request.__class__.__bases__ = (TLRequest,)
+        
+        mock_state2 = MagicMock()
+        mock_state2.msg_id = 67890
+        mock_state2.request = MagicMock()
+        mock_state2.request.__class__.__bases__ = (TLRequest,)
+        
+        call_count = [0]
+        async def mock_get():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ([[mock_state1, mock_state2]], b'data')
+            else:
+                sender._user_connected = False
+                return ([], b'')
+        
+        sender._send_queue.get = mock_get
+        
+        task = asyncio.create_task(sender._send_loop())
+        await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        
+        assert 12345 in sender._pending_state
+        assert 67890 in sender._pending_state
 
     def test_store_own_updates_updates(self, auth_key, mock_loggers):
         """Case: Storing Updates object -> Expected behaviour: Adds to updates_queue with _self_outgoing=True"""
